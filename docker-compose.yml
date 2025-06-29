@@ -1,0 +1,126 @@
+version: '3.8'
+
+services:
+  # PostgreSQL - Main database (users, scores, game data)
+  postgres:
+    image: postgres:16-alpine
+    container_name: devlife-postgres
+    restart: unless-stopped
+    ports:
+      - "6100:5432"
+    environment:
+      POSTGRES_DB: devlife
+      POSTGRES_USER: devlife_user
+      POSTGRES_PASSWORD: devlife_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../devlife-db-scripts/init:/docker-entrypoint-initdb.d:ro
+    networks:
+      - devlife-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U devlife_user -d devlife"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # MongoDB - Static content (profiles, code snippets)
+  mongodb:
+    image: mongo:7
+    container_name: devlife-mongodb
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: devlife_user
+      MONGO_INITDB_ROOT_PASSWORD: devlife_password
+      MONGO_INITDB_DATABASE: devlife
+    volumes:
+      - mongodb_data:/data/db
+      - ../devlife-db-scripts/mongo-init:/docker-entrypoint-initdb.d:ro
+    networks:
+      - devlife-network
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.runCommand('ping')"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+
+  # Redis - Caching and session management
+  redis:
+    image: redis:7-alpine
+    container_name: devlife-redis
+    restart: unless-stopped
+    ports:
+      - "6200:6379"
+    command: redis-server --appendonly yes --requirepass devlife_password
+    volumes:
+      - redis_data:/data
+    networks:
+      - devlife-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "devlife_password", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # .NET 9 Backend API
+  backend:
+    build:
+      context: ../devlife-backend
+      dockerfile: Dockerfile
+    container_name: devlife-backend
+    restart: unless-stopped
+    ports:
+      - "5000:8080"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:8080
+    env_file:
+      - ../devlife-backend/.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - devlife-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # # Angular Frontend
+  # frontend:
+  #   build:
+  #     context: ../devlife-frontend
+  #     dockerfile: Dockerfile
+  #   container_name: devlife-frontend
+  #   restart: unless-stopped
+  #   ports:
+  #     - "4200:4200"
+  #   environment:
+  #     - NODE_ENV=development
+  #   depends_on:
+  #     backend:
+  #       condition: service_healthy
+  #   networks:
+  #     - devlife-network
+  #   healthcheck:
+  #     test: ["CMD", "curl", "-f", "http://localhost:4200/health"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 3
+
+volumes:
+  postgres_data:
+  mongodb_data:
+  redis_data:
+
+networks:
+  devlife-network:
+    driver: bridge
