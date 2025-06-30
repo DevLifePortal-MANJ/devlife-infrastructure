@@ -1,7 +1,6 @@
 version: '3.8'
 
 services:
-  # PostgreSQL - Main database (users, scores, game data)
   postgres:
     image: postgres:16-alpine
     container_name: devlife-postgres
@@ -23,7 +22,6 @@ services:
       timeout: 5s
       retries: 5
 
-  # MongoDB - Static content (profiles, code snippets)
   mongodb:
     image: mongo:7
     container_name: devlife-mongodb
@@ -46,7 +44,6 @@ services:
       retries: 5
       start_period: 20s
 
-  # Redis - Caching and session management
   redis:
     image: redis:7-alpine
     container_name: devlife-redis
@@ -64,7 +61,6 @@ services:
       timeout: 5s
       retries: 3
 
-  # .NET 9 Backend API
   backend:
     build:
       context: ../devlife-backend
@@ -94,7 +90,7 @@ services:
       retries: 3
       start_period: 40s
 
-  # # Angular Frontend
+ # # Angular Frontend
   # frontend:
   #   build:
   #     context: ../devlife-frontend
