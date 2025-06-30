@@ -31,8 +31,8 @@ services:
     ports:
       - "27017:27017"
     environment:
-      MONGO_INITDB_ROOT_USERNAME: devlife_user
-      MONGO_INITDB_ROOT_PASSWORD: devlife_password
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: admin_password
       MONGO_INITDB_DATABASE: devlife
     volumes:
       - mongodb_data:/data/db

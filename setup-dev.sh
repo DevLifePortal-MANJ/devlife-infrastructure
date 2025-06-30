@@ -1,8 +1,8 @@
 #!/bin/bash
 
-# DevLife Portal Infrastructure Setup - LATEST VERSION
-echo "🚀 DevLife Portal Development Setup v2.0"
-echo "=========================================="
+# DevLife Portal Infrastructure Setup - FIXED VERSION
+echo "🚀 DevLife Portal Development Setup v2.1 (FIXED)"
+echo "================================================="
 
 # Colors for output
 GREEN='\033[0;32m'
@@ -75,19 +75,35 @@ check_repositories() {
 create_env_files() {
     print_step "Creating environment files..."
     
+    # Create infrastructure .env if missing
+    if [ ! -f ".env" ]; then
+        print_status "Creating infrastructure .env..."
+        cat > .env << 'EOF'
+POSTGRES_DB=devlife
+POSTGRES_USER=devlife_user
+POSTGRES_PASSWORD=devlife_password
+MONGO_INITDB_ROOT_USERNAME=admin
+MONGO_INITDB_ROOT_PASSWORD=admin_password
+MONGO_INITDB_DATABASE=devlife
+EOF
+        print_success "Infrastructure .env created!"
+    else
+        print_status "Infrastructure .env already exists"
+    fi
+    
     # Backend .env
     if [ ! -f "../devlife-backend/.env" ]; then
         print_status "Creating backend .env..."
         cat > ../devlife-backend/.env << 'EOF'
-# Database Configuration (Docker internal network)
-DATABASE_URL=postgresql://devlife_user:devlife_password@postgres:5432/devlife
-MONGODB_URL=mongodb://devlife_user:devlife_password@mongodb:27017/devlife
-REDIS_URL=redis://devlife_user:devlife_password@redis:6379
+# Database Configuration - Local Development (FIXED MongoDB auth)
+DATABASE_URL=postgresql://devlife_user:devlife_password@localhost:6100/devlife
+MONGODB_URL=mongodb://admin:admin_password@localhost:27017/devlife?authSource=admin
+REDIS_URL=redis://default:devlife_password@localhost:6200
 
-# For local development (outside Docker)
-# DATABASE_URL=postgresql://devlife_user:devlife_password@localhost:6100/devlife
-# MONGODB_URL=mongodb://devlife_user:devlife_password@localhost:27017/devlife
-# REDIS_URL=redis://devlife_user:devlife_password@localhost:6200
+# For Docker containers (internal network)
+# DATABASE_URL=postgresql://devlife_user:devlife_password@postgres:5432/devlife
+# MONGODB_URL=mongodb://admin:admin_password@mongodb:27017/devlife?authSource=admin
+# REDIS_URL=redis://default:devlife_password@redis:6379
 
 # Application Settings
 ASPNETCORE_ENVIRONMENT=Development
@@ -101,6 +117,7 @@ OPENAI_API_KEY=your_openai_api_key
 # Session Configuration
 SESSION_TIMEOUT_MINUTES=30
 EOF
+        print_success "Backend .env created with correct MongoDB authentication!"
     else
         print_warning "Backend .env already exists"
     fi
@@ -205,43 +222,6 @@ start_services() {
 execute_scripts_manually() {
     print_step "Executing database scripts..."
     
-    # Execute MongoDB scripts manually (always needed due to auth)
-    print_status "Initializing MongoDB collections..."
-    
-    if [ -f "../devlife-db-scripts/mongo-init/01-init-collections.js" ]; then
-        # Fix for Windows Git Bash path issues
-        export MSYS_NO_PATHCONV=1
-        
-        # Try mounted file first
-        if docker exec devlife-mongodb test -f /docker-entrypoint-initdb.d/01-init-collections.js 2>/dev/null; then
-            print_status "Executing via mounted file..."
-            docker exec devlife-mongodb mongosh devlife \
-                --authenticationDatabase admin \
-                -u devlife_user \
-                -p devlife_password \
-                --file /docker-entrypoint-initdb.d/01-init-collections.js 2>/dev/null
-        else
-            # Fallback: Copy and execute
-            print_status "Copying script to container..."
-            docker cp "../devlife-db-scripts/mongo-init/01-init-collections.js" devlife-mongodb:/tmp/init-collections.js
-            
-            print_status "Executing MongoDB script..."
-            docker exec devlife-mongodb mongosh devlife \
-                --authenticationDatabase admin \
-                -u devlife_user \
-                -p devlife_password \
-                --file /tmp/init-collections.js 2>/dev/null
-            
-            # Cleanup
-            docker exec devlife-mongodb rm /tmp/init-collections.js 2>/dev/null
-        fi
-        
-        unset MSYS_NO_PATHCONV
-        print_success "MongoDB initialization completed!"
-    else
-        print_error "MongoDB script not found: ../devlife-db-scripts/mongo-init/01-init-collections.js"
-    fi
-    
     # Check PostgreSQL scripts (usually auto-execute correctly)
     if ! docker exec devlife-postgres psql -U devlife_user -d devlife -c "SELECT 1 FROM users LIMIT 1;" &>/dev/null; then
         print_status "Executing PostgreSQL scripts manually..."
@@ -254,6 +234,63 @@ execute_scripts_manually() {
         if [ -f "../devlife-db-scripts/init/02-sample-data.sql" ]; then
             docker exec -i devlife-postgres psql -U devlife_user -d devlife < ../devlife-db-scripts/init/02-sample-data.sql
             print_success "PostgreSQL sample data inserted"
+        fi
+    else
+        print_status "PostgreSQL scripts already executed"
+    fi
+    
+    # Execute MongoDB scripts manually (FIXED authentication)
+    print_status "Initializing MongoDB collections..."
+    
+    if [ -f "../devlife-db-scripts/mongo-init/01-init-collections.js" ]; then
+        # Fix for Windows Git Bash path issues
+        export MSYS_NO_PATHCONV=1
+        
+        # Copy and execute with correct authentication
+        print_status "Copying script to container..."
+        docker cp "../devlife-db-scripts/mongo-init/01-init-collections.js" devlife-mongodb:/tmp/init-collections.js
+        
+        print_status "Executing MongoDB script with admin credentials..."
+        if docker exec devlife-mongodb mongosh devlife \
+            --authenticationDatabase admin \
+            -u admin \
+            -p admin_password \
+            --file /tmp/init-collections.js 2>/dev/null; then
+            print_success "MongoDB initialization completed!"
+        else
+            print_error "MongoDB script execution failed!"
+            print_warning "Trying direct collection creation..."
+            
+            # Fallback: Create collections directly
+            docker exec devlife-mongodb mongosh devlife \
+                --authenticationDatabase admin \
+                -u admin \
+                -p admin_password \
+                --eval 'db.code_snippets.insertMany([{language:"javascript",difficulty:1,correct_code:"function sum(a,b){return a+b;}",buggy_code:"function sum(a,b{return a+b;}",explanation:"Missing closing parenthesis",tech_stacks:["Angular","React"]}]); db.dating_profiles.insertMany([{name:"Alex Chen",bio:"Full-stack developer ☕",tech_stack:["Angular","Node.js"],experience_level:"Middle",zodiac_sign:"Gemini"}]); db.meeting_excuses.insertMany([{category:"technical",excuse:"Stack Overflow is down",believability:9}]); db.horoscopes.insertMany([{zodiac_sign:"Gemini",message:"Great coding day!",lucky_tech:"TypeScript"}]); db.code_challenges.insertMany([{title:"FizzBuzz",description:"Classic problem",difficulty:1,category:"algorithms",languages:["javascript"]}]); print("✅ Collections created directly!");'
+            
+            if [ $? -eq 0 ]; then
+                print_success "MongoDB collections created successfully!"
+            else
+                print_error "Failed to create MongoDB collections"
+            fi
+        fi
+        
+        # Cleanup
+        docker exec devlife-mongodb rm /tmp/init-collections.js 2>/dev/null
+        unset MSYS_NO_PATHCONV
+    else
+        print_error "MongoDB script not found: ../devlife-db-scripts/mongo-init/01-init-collections.js"
+        print_status "Creating collections directly..."
+        
+        # Create basic collections if script is missing
+        docker exec devlife-mongodb mongosh devlife \
+            --authenticationDatabase admin \
+            -u admin \
+            -p admin_password \
+            --eval 'db.code_snippets.insertMany([{language:"javascript",difficulty:1,correct_code:"function test(){}",buggy_code:"function test({",explanation:"Missing brace",tech_stacks:["Angular"]}]); db.dating_profiles.insertMany([{name:"Test User",bio:"Developer",tech_stack:["Angular"],experience_level:"Middle",zodiac_sign:"Gemini"}]); db.meeting_excuses.insertMany([{category:"technical",excuse:"Computer says no",believability:1}]); db.horoscopes.insertMany([{zodiac_sign:"Gemini",message:"Debug everything!",lucky_tech:"TypeScript"}]); print("✅ Basic collections created!");'
+        
+        if [ $? -eq 0 ]; then
+            print_success "Basic MongoDB collections created!"
         fi
     fi
     
@@ -286,48 +323,49 @@ test_connections() {
     
     echo ""
     
-    # Test MongoDB with authentication
+    # Test MongoDB with FIXED authentication
     if docker exec devlife-mongodb mongosh --eval "db.runCommand('ping')" &>/dev/null 2>&1; then
         print_success "MongoDB: ✅ Connected"
         
-        # Check collections with proper authentication
+        # Check collections with CORRECT authentication
         collections=$(docker exec devlife-mongodb mongosh devlife \
             --authenticationDatabase admin \
-            -u devlife_user \
-            -p devlife_password \
+            -u admin \
+            -p admin_password \
             --eval "db.getCollectionNames().length" --quiet 2>/dev/null)
         
         if [ ! -z "$collections" ] && [ "$collections" -gt 0 ]; then
             print_success "MongoDB Scripts: ✅ $collections collections created"
             
-            # Check specific collections
+            # Check specific collections with CORRECT authentication
             snippets=$(docker exec devlife-mongodb mongosh devlife \
                 --authenticationDatabase admin \
-                -u devlife_user \
-                -p devlife_password \
+                -u admin \
+                -p admin_password \
                 --eval "db.code_snippets.countDocuments()" --quiet 2>/dev/null)
             
             profiles=$(docker exec devlife-mongodb mongosh devlife \
                 --authenticationDatabase admin \
-                -u devlife_user \
-                -p devlife_password \
+                -u admin \
+                -p admin_password \
                 --eval "db.dating_profiles.countDocuments()" --quiet 2>/dev/null)
             
             excuses=$(docker exec devlife-mongodb mongosh devlife \
                 --authenticationDatabase admin \
-                -u devlife_user \
-                -p devlife_password \
+                -u admin \
+                -p admin_password \
                 --eval "db.meeting_excuses.countDocuments()" --quiet 2>/dev/null)
             
             horoscopes=$(docker exec devlife-mongodb mongosh devlife \
                 --authenticationDatabase admin \
-                -u devlife_user \
-                -p devlife_password \
+                -u admin \
+                -p admin_password \
                 --eval "db.horoscopes.countDocuments()" --quiet 2>/dev/null)
             
             print_success "Static Data: $snippets snippets, $profiles profiles, $excuses excuses, $horoscopes horoscopes"
         else
             print_error "MongoDB Scripts: ❌ No collections found"
+            print_warning "💡 You can manually fix this by running the direct MongoDB creation command"
         fi
     else
         print_error "MongoDB: ❌ Connection failed"
@@ -352,17 +390,10 @@ show_next_steps() {
     echo "=============="
     echo "1. Backend (.NET 9):"
     echo "   cd ../devlife-backend"
-    echo "   dotnet new web -o . --force"
-    echo "   dotnet add package Npgsql.EntityFrameworkCore.PostgreSQL"
-    echo "   dotnet add package MongoDB.Driver"
-    echo "   dotnet add package StackExchange.Redis"
-    echo "   dotnet add package Microsoft.AspNetCore.SignalR"
     echo "   dotnet run"
     echo ""
     echo "2. Frontend (Angular):"
     echo "   cd ../devlife-frontend"
-    echo "   ng new . --routing --style=scss --skip-git"
-    echo "   npm install tailwindcss postcss autoprefixer socket.io-client"
     echo "   ng serve --port 4200"
     echo ""
     echo "3. Full Docker Environment:"
@@ -379,7 +410,7 @@ show_next_steps() {
     echo "📊 Database Access:"
     echo "==================="
     echo "• PostgreSQL: docker exec -it devlife-postgres psql -U devlife_user -d devlife"
-    echo "• MongoDB: docker exec -it devlife-mongodb mongosh devlife -u devlife_user -p devlife_password"
+    echo "• MongoDB: docker exec -it devlife-mongodb mongosh devlife -u admin -p admin_password --authenticationDatabase admin"
     echo "• Redis: docker exec -it devlife-redis redis-cli -a devlife_password"
     echo ""
     echo "🎮 Ready to implement 6 projects:"
@@ -397,6 +428,10 @@ show_next_steps() {
     echo "• Stop all: docker-compose down"
     echo "• Restart: docker-compose restart [service_name]"
     echo "• Reset everything: docker-compose down -v && ./setup-dev.sh"
+    echo ""
+    echo "🛠 MongoDB Quick Fix (if collections missing):"
+    echo "=============================================="
+    echo 'docker exec devlife-mongodb mongosh devlife --authenticationDatabase admin -u admin -p admin_password --eval "db.code_snippets.insertOne({test:true}); print(\"Collections:\", db.getCollectionNames().length);"'
 }
 
 # Main execution
